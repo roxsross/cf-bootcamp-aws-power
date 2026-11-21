@@ -32,7 +32,7 @@ echo "4) CORS: el navegador pregunta antes de hacer el POST"
 cors=$(curl -s --max-time 10 -o /dev/null -D - -X OPTIONS "$API/ranking" \
   -H "Origin: http://ejemplo.com" \
   -H "Access-Control-Request-Method: POST" \
-  -H "Access-Control-Request-Headers: content-type" | tr -d '\r' | grep -i '^access-control-allow-origin')
+  -H "Access-Control-Request-Headers: " | tr -d '\r' | grep -i '^access-control-allow-origin')
 if [ -n "$cors" ]; then
   echo "   ✅ $cors"
 else

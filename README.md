@@ -1,6 +1,21 @@
 # 🎮 ROXS RUNNER · Práctica de la Clase 4
 
+![Bootcamp AWS](https://img.shields.io/badge/Bootcamp-AWS%20desde%20cero-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white)
+![Código Facilito](https://img.shields.io/badge/C%C3%B3digo-Facilito-1F2937?style=for-the-badge)
+![ROXSFEST 2026](https://img.shields.io/badge/ROXSFEST-2026-FF2D95?style=for-the-badge)
+
+![Amazon EC2](https://img.shields.io/badge/Amazon%20EC2-FF9900?style=flat-square&logo=amazonec2&logoColor=white)
+![AWS Lambda](https://img.shields.io/badge/AWS%20Lambda-FF9900?style=flat-square&logo=awslambda&logoColor=white)
+![API Gateway](https://img.shields.io/badge/API%20Gateway-HTTP%20API-A166FF?style=flat-square&logo=amazonapigateway&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
+![nginx](https://img.shields.io/badge/nginx-009639?style=flat-square&logo=nginx&logoColor=white)
+![Ubuntu](https://img.shields.io/badge/Ubuntu-E95420?style=flat-square&logo=ubuntu&logoColor=white)
+![Node.js 24](https://img.shields.io/badge/Node.js-24-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black)
+
 **ROXS RUNNER — Deploy or Die!** es un juego arcade donde Roxs corre hacia producción esquivando bugs, errores 500 y pipelines rotos. Lo creé para ROXSFEST 2026 y en el **Bootcamp AWS desde cero** (Código Facilito × AWS) lo llevamos a la nube.
+
+![Pantalla del juego ROXS RUNNER: Roxs corre por una ciudad nocturna, con un error 500 como obstáculo y un bloque AWS para recoger](assets/imag.png)
 
 Hoy vemos los tres modelos de cómputo con el mismo juego:
 
@@ -65,6 +80,64 @@ Qué responde la API:
 
 El nombre se recorta a 20 caracteres y el puntaje tiene que ser un número entero.
 
+### Ejemplo de respuestas
+
+Reemplaza `API` por la URL de tu API (o por `http://localhost:3000` si usas la API local).
+
+```bash
+API=https://<id>.execute-api.<region>.amazonaws.com
+```
+
+**Subir un puntaje** (`POST /ranking`):
+
+```bash
+curl -i -X POST "$API/ranking" \
+  -H "Content-Type: application/json" \
+  -d '{"nombre":"Ana","puntaje":512}'
+```
+
+```http
+HTTP/2 201
+content-type: application/json
+access-control-allow-origin: *
+
+{"posicion":1,"total":3}
+```
+
+**Ver el ranking** (`GET /ranking`). Llega ordenado de mayor a menor puntaje, con un máximo de 10 filas. `fecha` está en UTC, en formato ISO 8601:
+
+```bash
+curl -s "$API/ranking"
+```
+
+```json
+[
+  { "nombre": "Ana",  "puntaje": 512, "fecha": "2026-11-21T22:10:04.512Z" },
+  { "nombre": "Roxs", "puntaje": 340, "fecha": "2026-11-21T22:08:51.107Z" },
+  { "nombre": "Leo",  "puntaje": 66,  "fecha": "2026-11-21T22:05:30.940Z" }
+]
+```
+
+La API devuelve el JSON en una sola línea. Aquí está formateado para que se lea mejor. Si el ranking está vacío, devuelve `[]`.
+
+**Errores** (`400` y `404`):
+
+```bash
+curl -s -X POST "$API/ranking" -H "Content-Type: application/json" -d '{"puntaje":5}'
+# {"error":"Falta el nombre"}
+
+curl -s -X POST "$API/ranking" -H "Content-Type: application/json" -d '{"nombre":"Ana","puntaje":-1}'
+# {"error":"Puntaje inválido"}
+
+curl -s -X POST "$API/ranking" -H "Content-Type: application/json" -d 'hola'
+# {"error":"El cuerpo debe ser JSON"}
+
+curl -s "$API/otra-ruta"
+# {"message":"Not Found"}
+```
+
+Una ruta que no existe en API Gateway, como `/otra-ruta`, nunca llega a la Lambda: responde API Gateway con `404` y `{"message":"Not Found"}`. El `{"error":"Ruta no encontrada"}` de la Lambda aparece con la API local, o en AWS cuando la ruta llega a la función con otro nombre (por ejemplo, con una API REST o con `ANY /ranking`).
+
 ---
 
 ## Paso 1 · En tu computadora (2 min)
@@ -90,7 +163,7 @@ node scripts/api-local.mjs                       # API en http://localhost:3000
 ./scripts/probar-api.sh http://localhost:3000    # en otra terminal
 ```
 
-**Todo junto:** con la API local corriendo, pon `window.RANKING_API = "http://localhost:3000";` en `juego/config.js` y abre `juego/index.html` (o reconstruye el contenedor). Al perder aparece el ranking. Antes de subir tus cambios, deja `config.js` con la URL de tu API en AWS o vacío.
+**Todo junto:** con la API local corriendo, pon `window.RANKING_API = "http://localhost:3000";` en `juego/config.js` y abre `juego/index.html` (o reconstruye el contenedor). Al perder aparece el ranking. La API local acepta cualquier origen, incluso el doble clic; la de AWS no (ver [Lo que no puede fallar](#lo-que-no-puede-fallar)). Antes de subir tus cambios, deja `config.js` con la URL de tu API en AWS o vacío.
 
 ## Paso 2 · En AWS: EC2 con Ubuntu (20 min)
 
@@ -162,6 +235,22 @@ La API tiene dos rutas:
 | `GET /ranking` | Devuelve el top 10 |
 | `POST /ranking` | Guarda un puntaje: `{"nombre": "Ana", "puntaje": 512}` |
 
+### ¿Qué es CORS?
+
+El juego y la API viven en direcciones distintas. Por ejemplo, el juego en `http://localhost:8080` y la API en `https://<id>.execute-api.<region>.amazonaws.com`. Cada combinación de protocolo, dominio y puerto es un **origen**. Por seguridad, el navegador no deja que una página lea respuestas de otro origen, salvo que ese otro origen lo autorice.
+
+**CORS** (*Cross-Origin Resource Sharing*, intercambio de recursos entre orígenes) es la forma de dar ese permiso. La API lo da con cabeceras en su respuesta:
+
+| Cabecera | Qué le dice al navegador |
+| --- | --- |
+| `access-control-allow-origin: *` | Cualquier origen puede leer mis respuestas |
+| `access-control-allow-methods: GET,POST` | Acepto estos métodos |
+| `access-control-allow-headers: content-type` | Acepto que me mandes JSON con este encabezado |
+
+Antes de un `POST` con JSON, el navegador manda una pregunta previa (*preflight*): un `OPTIONS` a la misma ruta. Si la respuesta no trae esas cabeceras, el navegador cancela el `POST` y el juego muestra “No se pudo subir”. Si falta `access-control-allow-origin` en el `GET`, muestra “No se pudo cargar el ranking”.
+
+Por eso `curl` funciona aunque CORS esté mal: CORS lo aplica solo el navegador, y `curl` ignora esas cabeceras. En una API HTTP de API Gateway, las cabeceras las pone la propia API con su configuración de CORS. La Lambda no tiene que agregarlas.
+
 ### Con tu agente (plan A)
 
 ```text
@@ -185,7 +274,18 @@ y costo estimado. Espera mi confirmación.
 2. Pestaña **Código**: reemplaza el contenido de `index.mjs` por `lambda/index.mjs` › **Deploy**.
 3. **API Gateway** › **Crear API** › **API HTTP** › Compilar › integración **Lambda** › `roxs-runner-ranking`.
 4. Rutas: `GET /ranking` y `POST /ranking`, las dos a la misma función. Etapa `$default` con despliegue automático.
-5. **CORS** (menú de la API): origen `*`, métodos `GET, POST`, encabezados `content-type`. Guarda.
+5. **CORS** (menú de la API › **CORS** › **Configurar**). En cada campo con botón **Add**, escribe el valor y toca **Add**; si no, no se guarda:
+
+   | Campo | Valor |
+   | --- | --- |
+   | Access-Control-Allow-Origin | `*` |
+   | Access-Control-Allow-Headers | `content-type` |
+   | Access-Control-Allow-Methods | `GET`, `POST` (o `*`) |
+   | Access-Control-Expose-Headers | vacío |
+   | Access-Control-Max-Age | `0` (o `300`) |
+   | Access-Control-Allow-Credentials | **NO**. Con origen `*` no puede ir en SÍ |
+
+   Toca **Save**. Con la etapa `$default` y despliegue automático, el cambio se aplica solo.
 6. Copia la URL de invocación y prueba:
 
 ```bash
@@ -194,11 +294,31 @@ y costo estimado. Espera mi confirmación.
 
 El script hace un `GET`, un `POST` válido (esperado `201`), uno inválido (esperado `400`) y revisa que CORS responda.
 
+Para revisar CORS a mano, simula lo que hace el navegador antes del `POST`:
+
+```bash
+curl -i -X OPTIONS https://<id>.execute-api.<region>.amazonaws.com/ranking \
+  -H "Origin: http://localhost:8080" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: content-type"
+```
+
+Tiene que responder `204` con estas cabeceras:
+
+```text
+access-control-allow-origin: *
+access-control-allow-methods: POST
+access-control-allow-headers: content-type
+```
+
+Si responde `204` sin ninguna cabecera `access-control-*`, a CORS le falta el origen o el encabezado. La URL sola (`…amazonaws.com/`) responde `404 Not Found`; es normal, la única ruta es `/ranking`.
+
 ### Lo que no puede fallar
 
 - **API HTTP, no API REST.** El código lee `event.routeKey`, que solo llega en el formato de la API HTTP. Con una API REST o una URL de función, todo responde `404 Ruta no encontrada`.
 - **Rutas exactas** `GET /ranking` y `POST /ranking`. Con `ANY /ranking` o `/{proxy+}` el código no las reconoce.
-- **CORS en la API.** Sin CORS, `curl` funciona pero el juego muestra “No se pudo cargar el ranking”.
+- **CORS en la API.** Sin CORS, `curl` funciona pero el juego muestra “No se pudo cargar el ranking”. El campo que más se olvida es **Access-Control-Allow-Origin**: si queda vacío, la API no devuelve ninguna cabecera CORS.
+- **El juego por `http://`, no con doble clic.** Abierto como archivo (`file://`), el navegador manda `Origin: null` y API Gateway no lo cubre con `*`: responde sin cabeceras CORS y el ranking falla aunque la API esté bien. Sirve la carpeta `juego/` (ver [Conecta el juego al ranking](#conecta-el-juego-al-ranking)).
 - **Etapa `$default`.** Si creas una etapa con nombre, por ejemplo `prod`, la URL pasa a ser `…/prod` y así tienes que copiarla en `config.js`.
 
 ### Conecta el juego al ranking
@@ -209,8 +329,26 @@ El script hace un `GET`, un `POST` válido (esperado `201`), uno inválido (espe
    window.RANKING_API = "https://<id>.execute-api.<region>.amazonaws.com";
    ```
 
-2. Abre `juego/index.html`, juega y, al perder, escribe tu nombre y toca **📤 SUBIR**. Aparece el **🏆 TOP 5 GLOBAL** con tu fila resaltada.
-3. **Ranking de la clase:** si todos ponen en `config.js` la URL de la API de la instructora, compiten en un mismo ranking.
+2. Sirve el juego por http. Con doble clic (`file://`) el ranking no carga, porque API Gateway rechaza el origen `null`. Elige una de estas dos opciones:
+
+   **Opción A · Python** (viene instalado en macOS y Linux). Abre una terminal en la raíz del proyecto:
+   ```bash
+   cd juego
+   python3 -m http.server 8080
+   ```
+   En Windows usa `python -m http.server 8080` (o `py -m http.server 8080`). Si dice que no encuentra Python, instálalo desde [python.org](https://www.python.org/downloads/) y marca **Add python.exe to PATH**.
+
+   Abre `http://localhost:8080` en el navegador. Deja la terminal abierta mientras juegas; para apagar el servidor, presiona `Ctrl + C`. Si el puerto está ocupado, usa otro, por ejemplo `8081`.
+
+   **Opción B · Live Server de Visual Studio Code.**
+   1. En VS Code, abre la vista **Extensiones** (`Ctrl + Shift + X`, o `Cmd + Shift + X` en Mac), busca **Live Server** (de Ritwick Dey) e instálala.
+   2. En el explorador de archivos, clic derecho sobre `juego/index.html` › **Open with Live Server**. También puedes abrir el archivo y tocar **Go Live** en la barra inferior.
+   3. Se abre el navegador en una dirección como `http://127.0.0.1:5500/juego/index.html`. Cada vez que guardas un archivo, la página se recarga sola.
+   4. Para apagarlo, toca **Port: 5500** en la barra inferior.
+
+   Revisa que la barra del navegador empiece con `http://`. Si dice `file://`, abriste el archivo directo y el ranking no va a cargar. También sirven el contenedor de las pruebas locales o la EC2 del Paso 2.
+3. Juega y, al perder, escribe tu nombre y toca **📤 SUBIR**. Aparece el **🏆 TOP 5 GLOBAL** con tu fila resaltada.
+4. **Ranking de la clase:** si todos ponen en `config.js` la URL de la API de la instructora, compiten en un mismo ranking.
 
 Deja la API viva: en la clase 6 el juego pasa a S3 + CloudFront y solo quien inicia sesión entra al ranking.
 
@@ -219,7 +357,7 @@ Deja la API viva: en la clase 6 el juego pasa a S3 + CloudFront y solo quien ini
 | Lo que ves | Qué revisar |
 | --- | --- |
 | No aparece el campo para tu nombre al perder | `config.js` está vacío o no guardaste el archivo |
-| “No se pudo cargar el ranking. Revisa la URL de la API o CORS.” | La URL en `config.js` y la configuración de CORS de la API |
+| “No se pudo cargar el ranking. Revisa la URL de la API o CORS.” | 1) Que la barra del navegador diga `http://…` y no `file://…`. 2) Que `config.js` tenga la URL sin `/ranking`. 3) Que CORS tenga **Allow-Origin** `*` y **Allow-Headers** `content-type` (prueba con el `curl -X OPTIONS` del plan B). 4) En DevTools › **Network**, el código real de la respuesta: un `404` o `500` también se ve como error de CORS |
 | “No se pudo subir: Ruta no encontrada” | Que sea una API HTTP y que las rutas se llamen exactamente así |
 | `500 Internal Server Error` | Los logs: Lambda › `roxs-runner-ranking` › **Monitorear** › **Ver registros de CloudWatch** |
 
